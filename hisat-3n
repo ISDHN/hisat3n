@@ -449,7 +449,7 @@ sub Get_IndexFileName {
 }
 
 if($seq_in_args == 0) {
-	check_file_exist(\@unps, \@mate1s, \@mate2s);
+	# check_file_exist(\@unps, \@mate1s, \@mate2s);
 }
 
 if(wrapInput(\@unps, \@mate1s, \@mate2s)) {
