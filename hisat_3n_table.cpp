@@ -40,8 +40,6 @@ char convertToComplement;
 bool addedChrName = false;
 bool removedChrName = false;
 
-SafeQueue<string *> freeLinePool; // pool to store free string pointer for SAM line.
-
 Positions *positions;
 
 inline bool fileExist(string &filename) {
@@ -239,25 +237,6 @@ bool getSAMChromosomePos(string *line, string &chr, long long int &pos) {
 	return false;
 }
 
-/**
- * get a string pointer from freeLinePool, if freeLinePool is empty, make a new string pointer.
- */
-void getFreeStringPointer(string *&newLine) {
-	if (freeLinePool.popFront(newLine)) {
-		return;
-	} else {
-		newLine = new string();
-	}
-}
-
-/**
- * return the line to freeLinePool
- */
-void returnLine(string *line) {
-	line->clear();
-	freeLinePool.push(line);
-}
-
 /*void opeInFile(ifstream& f) {
 	if (alignmentFileName == "-") {
 		f = cin;
@@ -269,7 +248,8 @@ void returnLine(string *line) {
 }*/
 
 int hisat_3n_table() {
-	positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, returnLine);
+	LinePool *freeLinePool = new LinePool();
+	positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, freeLinePool);
 
 	// open #nThreads workers
 	vector<thread *> workers;
@@ -298,14 +278,14 @@ int hisat_3n_table() {
 	long long int lastPos = 0; // the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
 
 	while (alignmentFile->good()) {
-		getFreeStringPointer(line);
+		freeLinePool->getFreeStringPointer(line);
 		if (!getline(*alignmentFile, *line)) {
-			returnLine(line);
+			freeLinePool->returnLine(line);
 			break;
 		}
 
 		if (line->empty() || line->front() == '@') {
-			returnLine(line);
+			freeLinePool->returnLine(line);
 			continue;
 		}
 		// limit the linePool size to save memory
@@ -314,13 +294,14 @@ int hisat_3n_table() {
 		}
 		// if the SAM line is empty or unmapped, get the next SAM line.
 		if (!getSAMChromosomePos(line, samChromosome, samPos)) {
-			returnLine(line);
+			freeLinePool->returnLine(line);
 			continue;
 		}
 		// if the samChromosome is different than current positions' chromosome, finish all SAM line.
 		// then load a new reference chromosome.
 		if (samChromosome != positions->chromosome) {
 			// wait all line is processed
+			cerr << "Loading new chromosome: " << samChromosome << endl;
 			while (!positions->linePool.empty() || positions->outputPositionPool.size() > 100000) {
 				this_thread::sleep_for(std::chrono::microseconds(1));
 			}
@@ -367,9 +348,6 @@ int hisat_3n_table() {
 		this_thread::sleep_for(std::chrono::microseconds(100));
 	}
 	// stop all thread and clean
-	while (freeLinePool.popFront(line)) {
-		delete line;
-	}
 	positions->working = false;
 	for (int i = 0; i < nThreads; i++) {
 		workers[i]->join();

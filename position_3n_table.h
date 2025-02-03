@@ -186,7 +186,7 @@ class Position {
  */
 class Positions {
   private:
-	void (*returnLine)(string *line);
+	LinePool *freeLinePool;
 
   public:
 	vector<Position *> refPositions;		  // the pool of all current reference position.
@@ -206,12 +206,12 @@ class Positions {
 	bool addedChrName = false;
 	bool removedChrName = false;
 
-	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, void (*returnLineCallback)(string *line)) {
+	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, LinePool *freePool) {
 		working = true;
 		nThreads = inputNThreads;
 		addedChrName = inputAddedChrName;
 		removedChrName = inputRemovedChrName;
-		returnLine = returnLineCallback;
+		freeLinePool = freePool;
 		for (int i = 0; i < nThreads; i++) {
 			workerLock.push_back(new mutex);
 		}
@@ -523,7 +523,7 @@ class Positions {
 				this_thread::sleep_for(std::chrono::microseconds(1));
 			}
 			newAlignment.parse(line);
-			returnLine(line);
+			freeLinePool->returnLine(line);
 			appendPositions(newAlignment);
 			workerLock[threadID]->unlock();
 		}
