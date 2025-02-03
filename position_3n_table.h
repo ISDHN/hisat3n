@@ -20,6 +20,7 @@
 #ifndef POSITION_3N_TABLE_H
 #define POSITION_3N_TABLE_H
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -190,7 +191,7 @@ class OutputPool {
   public:
 	bool working = true;
 	void push(Positions *pos, Position *p) {
-		outputPositionPool.push(make_tuple(pos, p));
+		outputPositionPool.push({pos, p});
 	}
 
 	bool empty() {
@@ -205,47 +206,35 @@ class OutputPool {
  */
 class Positions {
   private:
-	LinePool *freeLinePool;
 	OutputPool *outputPositionPool; // pool to store the reference position which is loaded and ready to output.
 
   public:
 	vector<Position *> refPositions;		// the pool of all current reference position.
 	string chromosome;						// current reference chromosome name.
 	char lastBase = 'X';					// the last base of reference line. this is for CG_only mode.
-	SafeQueue<string *> linePool;			// pool to store unprocessed SAM line.
 	SafeQueue<Position *> freePositionPool; // pool to store free position pointer for reference position.
-	bool working;
 	bool addedChrName = false;
 	bool removedChrName = false;
 	mutex mutex_;
+	atomic_int32_t refCount;					// the number of thread is appending new position.
 	long long int location;						// current location (position) in reference chromosome.
 	long long int refCoveredPosition;			// this is the last position in reference chromosome we loaded in refPositions.
 	long long int samPos;						// the position of current SAM line.
 	long long int reloadPos = loadingBlockSize; // the position in reference that we need to reload.
 	long long int lastPos = 0;					// the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
 	ifstream refFile;
-	vector<mutex *> workerLock; // one lock for one worker thread.
-	int nThreads = 1;
 	ChromosomeFilePositions chromosomePos; // store the chromosome name and it's streamPos. To quickly find new chromosome in file.
 
-	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, LinePool *freePool, OutputPool *outputPool) {
-		working = true;
-		nThreads = inputNThreads;
+	Positions(string inputRefFileName, bool inputAddedChrName, bool inputRemovedChrName, OutputPool *outputPool) {
+		refCount.store(0);
 		addedChrName = inputAddedChrName;
 		removedChrName = inputRemovedChrName;
-		freeLinePool = freePool;
 		outputPositionPool = outputPool;
-		for (int i = 0; i < nThreads; i++) {
-			workerLock.push_back(new mutex);
-		}
 		refFile.open(inputRefFileName, ios_base::in);
 		LoadChromosomeNamesPos();
 	}
 
 	~Positions() {
-		for (int i = 0; i < workerLock.size(); i++) {
-			delete workerLock[i];
-		}
 		Position *pos;
 		while (freePositionPool.popFront(pos)) {
 			delete pos;
@@ -336,9 +325,8 @@ class Positions {
 	 * if we can go through all the workerLock, that means no worker is appending new position.
 	 */
 	void appendingFinished() {
-		for (int i = 0; i < nThreads; i++) {
-			workerLock[i]->lock();
-			workerLock[i]->unlock();
+		while (refCount.load() != 0) {
+			this_thread::sleep_for(std::chrono::microseconds(1));
 		}
 	}
 
@@ -495,31 +483,6 @@ class Positions {
 		pos->initialize();
 		freePositionPool.push(pos);
 	}
-
-	/**
-	 * this is the working function.
-	 * it take the SAM line from linePool, parse it.
-	 */
-	void append(int threadID) {
-		string *line;
-		Alignment newAlignment;
-
-		while (working) {
-			workerLock[threadID]->lock();
-			if (!linePool.popFront(line)) {
-				workerLock[threadID]->unlock();
-				this_thread::sleep_for(std::chrono::nanoseconds(1));
-				continue;
-			}
-			while (refPositions.empty()) {
-				this_thread::sleep_for(std::chrono::microseconds(1));
-			}
-			newAlignment.parse(line);
-			freeLinePool->returnLine(line);
-			appendPositions(newAlignment);
-			workerLock[threadID]->unlock();
-		}
-	}
 };
 
 /**
@@ -554,5 +517,65 @@ void OutputPool::outputFunction(string outputFileName) {
 	}
 	tableFile.close();
 }
+
+class WorkerThreadPool {
+  private:
+	LinePool *freeLinePool;
+	vector<thread *> workers;
+	/**
+	 * this is the working function.
+	 * it take the SAM line from linePool, parse it.
+	 */
+	void append() {
+		tuple<Positions *, string *> task;
+		Alignment newAlignment;
+
+		while (working) {
+			if (!tasks.popFront(task)) {
+				this_thread::sleep_for(std::chrono::nanoseconds(1));
+				continue;
+			}
+			Positions *src = get<0>(task);
+			string *line = get<1>(task);
+			while (src->refPositions.empty()) {
+				this_thread::sleep_for(std::chrono::microseconds(1));
+			}
+			newAlignment.parse(line);
+			freeLinePool->returnLine(line);
+			src->appendPositions(newAlignment);
+			src->refCount -= 1;
+		}
+	}
+
+  public:
+	bool working = true;
+	SafeQueue<tuple<Positions *, string *>> tasks; // pool to store unprocessed SAM line and the positions it belongs to.
+	WorkerThreadPool(int nThread, LinePool *freePool) {
+		freeLinePool = freePool;
+		for (int i = 0; i < nThread; i++) {
+			// open #nThreads workers
+			workers.push_back(new thread(&WorkerThreadPool::append, this));
+		}
+	}
+
+	bool remains() {
+		return !tasks.empty();
+	}
+
+	int workCount() {
+		return workers.size();
+	}
+
+	void submit(Positions *pos, string *line) {
+		tasks.push({pos, line});
+	}
+
+	~WorkerThreadPool() {
+		for (auto worker : workers) {
+			worker->join();
+			delete worker;
+		}
+	}
+};
 
 #endif // POSITION_3N_TABLE_H
