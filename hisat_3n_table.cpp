@@ -249,7 +249,8 @@ bool getSAMChromosomePos(string *line, string &chr, long long int &pos) {
 
 int hisat_3n_table() {
 	LinePool *freeLinePool = new LinePool();
-	positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, freeLinePool);
+	OutputPool *outputPool = new OutputPool();
+	positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, freeLinePool, outputPool);
 
 	// open #nThreads workers
 	vector<thread *> workers;
@@ -259,7 +260,7 @@ int hisat_3n_table() {
 
 	// open a output thread
 	thread outputThread;
-	outputThread = thread(&Positions::outputFunction, positions, outputFileName);
+	outputThread = thread(&OutputPool::outputFunction, outputPool, outputFileName);
 
 	// main function, initially 2 load loadingBlockSize (2,000,000) bp of reference, set reloadPos to 1 loadingBlockSize, then load SAM data.
 	// when the samPos larger than the reloadPos load 1 loadingBlockSize bp of reference.
@@ -302,7 +303,7 @@ int hisat_3n_table() {
 		if (samChromosome != positions->chromosome) {
 			// wait all line is processed
 			cerr << "Loading new chromosome: " << samChromosome << endl;
-			while (!positions->linePool.empty() || positions->outputPositionPool.size() > 100000) {
+			while (!positions->linePool.empty()) {
 				this_thread::sleep_for(std::chrono::microseconds(1));
 			}
 			positions->appendingFinished();
@@ -313,7 +314,7 @@ int hisat_3n_table() {
 		}
 		// if the samPos is larger than reloadPos, load 1 loadingBlockSize bp in from reference.
 		while (samPos > reloadPos) {
-			while (!positions->linePool.empty() || positions->outputPositionPool.size() > 100000) {
+			while (!positions->linePool.empty()) {
 				this_thread::sleep_for(std::chrono::microseconds(1));
 			}
 			positions->appendingFinished();
@@ -344,7 +345,7 @@ int hisat_3n_table() {
 	// move all position to outputPool
 	positions->moveAllToOutput();
 	// wait until outputPool is empty
-	while (!positions->outputPositionPool.empty()) {
+	while (!outputPool->empty()) {
 		this_thread::sleep_for(std::chrono::microseconds(100));
 	}
 	// stop all thread and clean
@@ -353,8 +354,11 @@ int hisat_3n_table() {
 		workers[i]->join();
 		delete workers[i];
 	}
+	outputPool->working = false;
 	outputThread.join();
 	delete positions;
+	delete outputPool;
+	delete freeLinePool;
 	return 0;
 }
 

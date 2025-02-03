@@ -181,21 +181,38 @@ class Position {
 	}
 };
 
+class Positions;
+
+class OutputPool {
+  private:
+	SafeQueue<tuple<Positions *, Position *>> outputPositionPool;
+
+  public:
+	bool working = true;
+	void push(Positions *pos, Position *p) {
+		outputPositionPool.push(make_tuple(pos, p));
+	}
+	bool empty() {
+		return outputPositionPool.empty();
+	}
+	void outputFunction(string outputFileName);
+};
+
 /**
  * store all reference position in this class.
  */
 class Positions {
   private:
 	LinePool *freeLinePool;
+	OutputPool *outputPositionPool; // pool to store the reference position which is loaded and ready to output.
 
   public:
-	vector<Position *> refPositions;		  // the pool of all current reference position.
-	string chromosome;						  // current reference chromosome name.
-	long long int location;					  // current location (position) in reference chromosome.
-	char lastBase = 'X';					  // the last base of reference line. this is for CG_only mode.
-	SafeQueue<string *> linePool;			  // pool to store unprocessed SAM line.
-	SafeQueue<Position *> freePositionPool;	  // pool to store free position pointer for reference position.
-	SafeQueue<Position *> outputPositionPool; // pool to store the reference position which is loaded and ready to output.
+	vector<Position *> refPositions;		// the pool of all current reference position.
+	string chromosome;						// current reference chromosome name.
+	long long int location;					// current location (position) in reference chromosome.
+	char lastBase = 'X';					// the last base of reference line. this is for CG_only mode.
+	SafeQueue<string *> linePool;			// pool to store unprocessed SAM line.
+	SafeQueue<Position *> freePositionPool; // pool to store free position pointer for reference position.
 	bool working;
 	mutex mutex_;
 	long long int refCoveredPosition; // this is the last position in reference chromosome we loaded in refPositions.
@@ -206,12 +223,13 @@ class Positions {
 	bool addedChrName = false;
 	bool removedChrName = false;
 
-	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, LinePool *freePool) {
+	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, LinePool *freePool, OutputPool *outputPool) {
 		working = true;
 		nThreads = inputNThreads;
 		addedChrName = inputAddedChrName;
 		removedChrName = inputRemovedChrName;
 		freeLinePool = freePool;
+		outputPositionPool = outputPool;
 		for (int i = 0; i < nThreads; i++) {
 			workerLock.push_back(new mutex);
 		}
@@ -320,37 +338,6 @@ class Positions {
 	}
 
 	/**
-	 * the output function for output thread.
-	 */
-	void outputFunction(string outputFileName) {
-		ostream *out_ = &cout;
-		out_ = &cout;
-		ofstream tableFile;
-		if (!outputFileName.empty()) {
-			tableFile.open(outputFileName, ios_base::out);
-			out_ = &tableFile;
-		}
-
-		*out_ << "ref\tpos\tstrand\tconvertedBaseQualities\tconvertedBaseCount\tunconvertedBaseQualities\tunconvertedBaseCount\n";
-		Position *pos;
-		while (working) {
-			if (outputPositionPool.popFront(pos)) {
-				*out_ << pos->chromosome << '\t'
-					  << to_string(pos->location) << '\t'
-					  << pos->strand << '\t'
-					  << pos->convertedQualities << '\t'
-					  << to_string(pos->convertedQualities.size()) << '\t'
-					  << pos->unconvertedQualities << '\t'
-					  << to_string(pos->unconvertedQualities.size()) << '\n';
-				returnPosition(pos);
-			} else {
-				this_thread::sleep_for(std::chrono::microseconds(1));
-			}
-		}
-		tableFile.close();
-	}
-
-	/**
 	 * move the position which position smaller than refCoveredPosition - loadingBlockSize, output it.
 	 */
 	void moveBlockToOutput() {
@@ -363,7 +350,7 @@ class Positions {
 				if (refPositions[index]->empty() || refPositions[index]->strand == '?') {
 					returnPosition(refPositions[index]);
 				} else {
-					outputPositionPool.push(refPositions[index]);
+					outputPositionPool->push(this, refPositions[index]);
 				}
 			} else {
 				break;
@@ -386,7 +373,7 @@ class Positions {
 				returnPosition(refPositions[index]);
 			} else {
 				vector<uniqueID>().swap(refPositions[index]->uniqueIDs);
-				outputPositionPool.push(refPositions[index]);
+				outputPositionPool->push(this, refPositions[index]);
 			}
 		}
 		refPositions.clear();
@@ -486,9 +473,9 @@ class Positions {
 	 * get a Position pointer from freePositionPool, if freePositionPool is empty, make a new Position pointer.
 	 */
 	void getFreePosition(Position *&newPosition) {
-		while (outputPositionPool.size() >= 10000) {
-			this_thread::sleep_for(std::chrono::microseconds(1));
-		}
+		// while (outputPositionPool.size() >= 10000) {
+		// 	this_thread::sleep_for(std::chrono::microseconds(1));
+		// }
 		if (freePositionPool.popFront(newPosition)) {
 			return;
 		} else {
@@ -529,5 +516,38 @@ class Positions {
 		}
 	}
 };
+
+/**
+ * the output function for output thread.
+ */
+void OutputPool::outputFunction(string outputFileName) {
+	ostream *out_ = &cout;
+	out_ = &cout;
+	ofstream tableFile;
+	if (!outputFileName.empty()) {
+		tableFile.open(outputFileName, ios_base::out);
+		out_ = &tableFile;
+	}
+
+	*out_ << "ref\tpos\tstrand\tconvertedBaseQualities\tconvertedBaseCount\tunconvertedBaseQualities\tunconvertedBaseCount\n";
+	tuple<Positions *, Position *> entry;
+	while (working) {
+		if (outputPositionPool.popFront(entry)) {
+			Positions *src = get<0>(entry);
+			Position *pos = get<1>(entry);
+			*out_ << pos->chromosome << '\t'
+				  << to_string(pos->location) << '\t'
+				  << pos->strand << '\t'
+				  << pos->convertedQualities << '\t'
+				  << to_string(pos->convertedQualities.size()) << '\t'
+				  << pos->unconvertedQualities << '\t'
+				  << to_string(pos->unconvertedQualities.size()) << '\n';
+			src->returnPosition(pos);
+		} else {
+			this_thread::sleep_for(std::chrono::microseconds(1));
+		}
+	}
+	tableFile.close();
+}
 
 #endif // POSITION_3N_TABLE_H
