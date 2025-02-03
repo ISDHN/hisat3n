@@ -323,12 +323,7 @@ int hisat_3n_table() {
 	}
 
 	// prepare to close everything.
-
-	// make sure linePool is empty
-	while (workers->remains()) {
-		this_thread::sleep_for(std::chrono::microseconds(100));
-	}
-	// make sure all workers finished their appending work.
+	// make sure all workers finished all appending work.
 	positions->appendingFinished();
 	// move all position to outputPool
 	positions->moveAllToOutput();
