@@ -19,6 +19,7 @@
 
 #include <iostream>
 #include <getopt.h>
+#include <stdint.h>
 #include "position_3n_table.h"
 
 using namespace std;
@@ -31,7 +32,7 @@ bool uniqueOnly = false;
 bool multipleOnly = false;
 bool CG_only = false;
 int nThreads = 1;
-int linePerThread = 1000;
+uint32_t linePerThread = 1000;
 long long int loadingBlockSize = 1000000;
 char convertFrom = '0';
 char convertTo = '0';
@@ -76,14 +77,14 @@ static void printHelp(ostream &out) {
 		<< "  <chr1,chr2>               the char1 is the nucleotide converted from, the char2 is the nucleotide converted to." << endl;
 	out << "Options (defaults in parentheses):" << endl
 		<< " Input:" << endl
-		<< "  -u/--unique-only          only count the base which is in unique mapped reads." << endl
-		<< "  -m/--multiple-only        only count the base which is in multiple mapped reads." << endl
-		<< "  -c/--CG-only              only count CG and ignore CH in reference." << endl
-		<< "  --added-chrname           please add this option if you use --add-chrname during HISAT-3N alignment." << endl
-		<< "  --removed-chrname         please add this option if you use --remove-chrname during HISAT-3N alignment." << endl
-		<< "  -p/--threads <int>        number of threads to launch (1)." << endl
-		<< "  -l/--line-per-thread <int> number of lines to load per thread (default: 1000)." << endl
-		<< "  -h/--help                 print this usage message." << endl;
+		<< "  -u/--unique-only           only count the base which is in unique mapped reads." << endl
+		<< "  -m/--multiple-only         only count the base which is in multiple mapped reads." << endl
+		<< "  -c/--CG-only               only count CG and ignore CH in reference." << endl
+		<< "  --added-chrname            please add this option if you use --add-chrname during HISAT-3N alignment." << endl
+		<< "  --removed-chrname          please add this option if you use --remove-chrname during HISAT-3N alignment." << endl
+		<< "  -p/--threads <int>         number of threads to launch (1)." << endl
+		<< "  -l/--line-per-thread <int> number of lines to load per thread, 0 stands for no limit (default: 1000)." << endl
+		<< "  -h/--help                  print this usage message." << endl;
 }
 
 static void parseOption(int next_option, const char *optarg) {
@@ -136,9 +137,6 @@ static void parseOption(int next_option, const char *optarg) {
 		}
 		case 'l': {
 			linePerThread = atoi(optarg);
-			if (linePerThread < 1) {
-				linePerThread = 1;
-			}
 			break;
 		}
 		case 'h': {
@@ -283,7 +281,7 @@ int hisat_3n_table() {
 			continue;
 		}
 		// limit the linePool size to save memory
-		while (workers->workCount() > linePerThread * nThreads) {
+		while (linePerThread && workers->workCount() > linePerThread * nThreads) {
 			this_thread::sleep_for(std::chrono::microseconds(1));
 		}
 		// if the SAM line is empty or unmapped, get the next SAM line.
