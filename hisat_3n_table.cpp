@@ -40,8 +40,6 @@ char convertToComplement;
 bool addedChrName = false;
 bool removedChrName = false;
 
-Positions *positions;
-
 inline bool fileExist(string &filename) {
 	ifstream file(filename);
 	return file.good();
@@ -250,7 +248,7 @@ bool getSAMChromosomePos(string *line, string &chr, long long int &pos) {
 int hisat_3n_table() {
 	LinePool *freeLinePool = new LinePool();
 	OutputPool *outputPool = new OutputPool();
-	positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, freeLinePool, outputPool);
+	Positions *positions = new Positions(refFileName, nThreads, addedChrName, removedChrName, freeLinePool, outputPool);
 
 	// open #nThreads workers
 	vector<thread *> workers;
@@ -272,11 +270,8 @@ int hisat_3n_table() {
 		alignmentFile = &inputFile;
 	}
 
-	string *line;			   // temporary string to get SAM line.
-	string samChromosome;	   // the chromosome name of current SAM line.
-	long long int samPos;	   // the position of current SAM line.
-	long long int reloadPos;   // the position in reference that we need to reload.
-	long long int lastPos = 0; // the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
+	string *line;		  // temporary string to get SAM line.
+	string samChromosome; // the chromosome name of current SAM line.
 
 	while (alignmentFile->good()) {
 		freeLinePool->getFreeStringPointer(line);
@@ -294,7 +289,7 @@ int hisat_3n_table() {
 			this_thread::sleep_for(std::chrono::microseconds(1));
 		}
 		// if the SAM line is empty or unmapped, get the next SAM line.
-		if (!getSAMChromosomePos(line, samChromosome, samPos)) {
+		if (!getSAMChromosomePos(line, samChromosome, positions->samPos)) {
 			freeLinePool->returnLine(line);
 			continue;
 		}
@@ -309,25 +304,25 @@ int hisat_3n_table() {
 			positions->appendingFinished();
 			positions->moveAllToOutput();
 			positions->loadNewChromosome(samChromosome);
-			reloadPos = loadingBlockSize;
-			lastPos = 0;
+			positions->reloadPos = loadingBlockSize;
+			positions->lastPos = 0;
 		}
 		// if the samPos is larger than reloadPos, load 1 loadingBlockSize bp in from reference.
-		while (samPos > reloadPos) {
+		while (positions->samPos > positions->reloadPos) {
 			while (!positions->linePool.empty()) {
 				this_thread::sleep_for(std::chrono::microseconds(1));
 			}
 			positions->appendingFinished();
 			positions->moveBlockToOutput();
 			positions->loadMore();
-			reloadPos += loadingBlockSize;
+			positions->reloadPos += loadingBlockSize;
 		}
-		if (lastPos > samPos) {
+		if (positions->lastPos > positions->samPos) {
 			cerr << "The input alignment file is not sorted. Please use sorted SAM file as alignment file." << endl;
 			throw 1;
 		}
 		positions->linePool.push(line);
-		lastPos = samPos;
+		positions->lastPos = positions->samPos;
 	}
 	//}
 	if (!standardInMode) {

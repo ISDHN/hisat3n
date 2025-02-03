@@ -192,9 +192,11 @@ class OutputPool {
 	void push(Positions *pos, Position *p) {
 		outputPositionPool.push(make_tuple(pos, p));
 	}
+
 	bool empty() {
 		return outputPositionPool.empty();
 	}
+
 	void outputFunction(string outputFileName);
 };
 
@@ -209,19 +211,22 @@ class Positions {
   public:
 	vector<Position *> refPositions;		// the pool of all current reference position.
 	string chromosome;						// current reference chromosome name.
-	long long int location;					// current location (position) in reference chromosome.
 	char lastBase = 'X';					// the last base of reference line. this is for CG_only mode.
 	SafeQueue<string *> linePool;			// pool to store unprocessed SAM line.
 	SafeQueue<Position *> freePositionPool; // pool to store free position pointer for reference position.
 	bool working;
+	bool addedChrName = false;
+	bool removedChrName = false;
 	mutex mutex_;
-	long long int refCoveredPosition; // this is the last position in reference chromosome we loaded in refPositions.
+	long long int location;						// current location (position) in reference chromosome.
+	long long int refCoveredPosition;			// this is the last position in reference chromosome we loaded in refPositions.
+	long long int samPos;						// the position of current SAM line.
+	long long int reloadPos = loadingBlockSize; // the position in reference that we need to reload.
+	long long int lastPos = 0;					// the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
 	ifstream refFile;
 	vector<mutex *> workerLock; // one lock for one worker thread.
 	int nThreads = 1;
 	ChromosomeFilePositions chromosomePos; // store the chromosome name and it's streamPos. To quickly find new chromosome in file.
-	bool addedChrName = false;
-	bool removedChrName = false;
 
 	Positions(string inputRefFileName, int inputNThreads, bool inputAddedChrName, bool inputRemovedChrName, LinePool *freePool, OutputPool *outputPool) {
 		working = true;
