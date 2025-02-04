@@ -32,7 +32,7 @@
 using namespace std;
 
 extern bool CG_only;
-extern long long int loadingBlockSize;
+constexpr long long int loadingBlockSize = 1000000;
 
 /**
  * store unique information for one base information with readID, and the quality.
@@ -198,6 +198,10 @@ class OutputPool {
 		return outputPositionPool.empty();
 	}
 
+	int size() {
+		return outputPositionPool.size();
+	}
+
 	void outputFunction(string outputFileName);
 };
 
@@ -213,17 +217,16 @@ class Positions {
 	string chromosome;						// current reference chromosome name.
 	char lastBase = 'X';					// the last base of reference line. this is for CG_only mode.
 	SafeQueue<Position *> freePositionPool; // pool to store free position pointer for reference position.
+	bool finished = false;					// if the chromosome positions is finished.
 	bool addedChrName = false;
 	bool removedChrName = false;
 	mutex mutex_;
-	atomic_int32_t refCount;					// the number of thread is appending new position.
-	long long int location;						// current location (position) in reference chromosome.
-	long long int refCoveredPosition;			// this is the last position in reference chromosome we loaded in refPositions.
-	long long int samPos;						// the position of current SAM line.
-	long long int reloadPos = loadingBlockSize; // the position in reference that we need to reload.
-	long long int lastPos = 0;					// the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
-	ifstream refFile;
+	atomic_int32_t refCount;		  // the number of unprocessed or unfinished position
+	long long int location;			  // current location (position) in reference chromosome.
+	long long int refCoveredPosition; // this is the last position in reference chromosome we loaded in refPositions.
+
 	ChromosomeFilePositions chromosomePos; // store the chromosome name and it's streamPos. To quickly find new chromosome in file.
+	ifstream refFile;
 
 	Positions(string inputRefFileName, bool inputAddedChrName, bool inputRemovedChrName, OutputPool *outputPool) {
 		refCount.store(0);

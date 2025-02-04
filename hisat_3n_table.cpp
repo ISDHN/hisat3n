@@ -33,7 +33,9 @@ bool multipleOnly = false;
 bool CG_only = false;
 int nThreads = 1;
 uint32_t linePerThread = 1000;
-long long int loadingBlockSize = 1000000;
+long long int samPos;						// the position of current SAM line.
+long long int reloadPos = loadingBlockSize; // the position in reference that we need to reload.
+long long int lastPos = 0;					// the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
 char convertFrom = '0';
 char convertTo = '0';
 char convertFromComplement;
@@ -281,11 +283,11 @@ int hisat_3n_table() {
 			continue;
 		}
 		// limit the linePool size to save memory
-		while (linePerThread && workers->workCount() > linePerThread * nThreads) {
+		while ((linePerThread && workers->workCount() > linePerThread * nThreads)) {
 			this_thread::sleep_for(std::chrono::microseconds(1));
 		}
 		// if the SAM line is empty or unmapped, get the next SAM line.
-		if (!getSAMChromosomePos(line, samChromosome, positions->samPos)) {
+		if (!getSAMChromosomePos(line, samChromosome, samPos)) {
 			freeLinePool->returnLine(line);
 			continue;
 		}
@@ -297,23 +299,23 @@ int hisat_3n_table() {
 			positions->appendingFinished();
 			positions->moveAllToOutput();
 			positions->loadNewChromosome(samChromosome);
-			positions->reloadPos = loadingBlockSize;
-			positions->lastPos = 0;
+			reloadPos = loadingBlockSize;
+			lastPos = 0;
 		}
 		// if the samPos is larger than reloadPos, load 1 loadingBlockSize bp in from reference.
-		while (positions->samPos > positions->reloadPos) {
+		while (samPos > reloadPos) {
 			positions->appendingFinished();
 			positions->moveBlockToOutput();
 			positions->loadMore();
-			positions->reloadPos += loadingBlockSize;
+			reloadPos += loadingBlockSize;
 		}
-		if (positions->lastPos > positions->samPos) {
+		if (lastPos > samPos) {
 			cerr << "The input alignment file is not sorted. Please use sorted SAM file as alignment file." << endl;
 			throw 1;
 		}
 		positions->refCount += 1;
 		workers->submit(positions, line);
-		positions->lastPos = positions->samPos;
+		lastPos = samPos;
 	}
 	//}
 	if (!standardInMode) {
