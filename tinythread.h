@@ -229,7 +229,7 @@ class mutex {
 #endif
     }
 
-    _TTHREAD_DISABLE_ASSIGNMENT(mutex)
+    // _TTHREAD_DISABLE_ASSIGNMENT(mutex)
 
   private:
 #if defined(_TTHREAD_WIN32_)
