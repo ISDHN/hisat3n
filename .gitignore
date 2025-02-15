@@ -9,6 +9,8 @@ hisat2.xcodeproj/project.xcworkspace
 hisat2.xcodeproj/xcuserdata
 hisat2.xcodeproj/xcshareddata
 *.patch
+compile_commands.json
+.cache/
 
 build_automaton
 build_index
