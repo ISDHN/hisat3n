@@ -24,46 +24,74 @@
  * the read with the given id.
  */
 void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
-	ThreadSafe t(&mutex_m, threadSafe_);
 	nstarted_++;
-	if(reorder_) {
+	if (reorder_) {
+		auto __line = lines_.lock();
+		std::shared_lock<std::shared_mutex> lock(mutex_cur);
 		assert_geq(rdid, cur_);
-		assert_eq(lines_.size(), finished_.size());
-		assert_eq(lines_.size(), started_.size());
-		if(rdid - cur_ >= lines_.size()) {
+		// assert_eq(lines_.size(), finished_.size());
+		// assert_eq(lines_.size(), started_.size());
+		if (rdid - cur_ >= __line->size()) {
 			// Make sure there's enough room in lines_, started_ and finished_
-			size_t oldsz = lines_.size();
-			lines_.resize(rdid - cur_ + 1);
-			started_.resize(rdid - cur_ + 1);
-			finished_.resize(rdid - cur_ + 1);
-			for(size_t i = oldsz; i < lines_.size(); i++) {
-				started_[i] = finished_[i] = false;
+			size_t oldsz = __line->size();
+			__line->resize(rdid - cur_ + 1);
+			int size = __line->size();
+			lines_.unlock();
+
+			auto __started = started_.lock();
+			auto __finished = finished_.lock();
+			__started->resize(rdid - cur_ + 1);
+			__finished->resize(rdid - cur_ + 1);
+
+			for (size_t i = oldsz; i < size; i++) {
+				(*__started)[i] = (*__finished)[i] = false;
 			}
+
+			started_.unlock();
+			finished_.unlock();
+		} else {
+			lines_.unlock();
 		}
-		started_[rdid - cur_] = true;
-		finished_[rdid - cur_] = false;
+		auto __started = started_.lock();
+		(*__started)[rdid - cur_] = true;
+		started_.unlock();
+
+		auto __finished = finished_.lock();
+		(*__finished)[rdid - cur_] = false;
+		finished_.unlock();
 	}
 }
 
 /**
- * Writer is finished writing to 
+ * Writer is finished writing to
  */
-void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId) {
-	ThreadSafe t(&mutex_m, threadSafe_);
-	if(reorder_) {
+void OutputQueue::finishRead(const BTString &rec, TReadId rdid, size_t threadId) {
+	if (reorder_) {
+		std::shared_lock<std::shared_mutex> lock(mutex_cur);
 		assert_geq(rdid, cur_);
-		assert_eq(lines_.size(), finished_.size());
-		assert_eq(lines_.size(), started_.size());
-		assert_lt(rdid - cur_, lines_.size());
-		assert(started_[rdid - cur_]);
-		assert(!finished_[rdid - cur_]);
-		lines_[rdid - cur_] = rec;
+		// assert_eq(lines_.size(), finished_.size());
+		// assert_eq(lines_.size(), started_.size());
+		// assert_lt(rdid - cur_, lines_.size());
+		// assert(started_[rdid - cur_]);
+		// assert(!finished_[rdid - cur_]);
+		auto __line = lines_.lock();
+		(*__line)[rdid - cur_] = rec;
+		lines_.unlock();
+
 		nfinished_++;
-		finished_[rdid - cur_] = true;
-		flush(false, false); // don't force; already have lock
+
+		auto __finished = finished_.lock();
+		(*__finished)[rdid - cur_] = true;
+		finished_.unlock();
+		lock.release();
+
+		flush(false); // don't force; already have lock
 	} else {
 		// obuf_ is the OutFileBuf for the output file
+		ThreadSafe *t = new ThreadSafe(&mutex_m, threadSafe_);
 		obuf_.writeString(rec);
+		delete t;
+
 		nfinished_++;
 		nflushed_++;
 	}
@@ -73,28 +101,45 @@ void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId)
  * Write already-finished lines starting from cur_.
  */
 void OutputQueue::flush(bool force, bool getLock) {
-	if(!reorder_) {
+	if (!reorder_) {
 		return;
 	}
-	ThreadSafe t(&mutex_m, getLock && threadSafe_);
+	// ThreadSafe t(&mutex_m, getLock && threadSafe_);
 	size_t nflush = 0;
-	while(nflush < finished_.size() && finished_[nflush]) {
-		assert(started_[nflush]);
+	auto __finished = finished_.lock();
+	while (nflush < __finished->size() && (*__finished)[nflush]) {
+		// assert(started_[nflush]);
 		nflush++;
 	}
+	finished_.unlock();
+
 	// Waiting until we have several in a row to flush cuts down on copies
 	// (but requires more buffering)
-	if(force || nflush >= NFLUSH_THRESH) {
-		for(size_t i = 0; i < nflush; i++) {
-			assert(started_[i]);
-			assert(finished_[i]);
-			obuf_.writeString(lines_[i]);
+	if (force || nflush >= NFLUSH_THRESH) {
+		auto __line = lines_.lock();
+
+		ThreadSafe *t = new ThreadSafe(&mutex_m, getLock && threadSafe_);
+		for (size_t i = 0; i < nflush; i++) {
+			// assert(started_[i]);
+			// assert(finished_[i]);
+			obuf_.writeString((*__line)[i]);
 		}
-		lines_.erase(0, nflush);
-		started_.erase(0, nflush);
-		finished_.erase(0, nflush);
-		cur_ += nflush;
+		delete t;
+
+		__line->erase(0, nflush);
+		lines_.unlock();
+
+		auto __started = started_.lock();
+		__started->erase(0, nflush);
+		started_.unlock();
+
+		__finished = finished_.lock();
+		__finished->erase(0, nflush);
+		finished_.unlock();
+
 		nflushed_ += nflush;
+		std::unique_lock<std::shared_mutex> lock(mutex_cur);
+		cur_ += nflush;
 	}
 }
 
@@ -171,11 +216,11 @@ int main(void) {
 	{
 		OutFileBuf ofb;
 		OutputQueue oq(ofb, false);
-		BTString& buf1 = oq.beginRead(0);
-		BTString& buf2 = oq.beginRead(1);
-		BTString& buf3 = oq.beginRead(2);
-		BTString& buf4 = oq.beginRead(3);
-		BTString& buf5 = oq.beginRead(4);
+		BTString &buf1 = oq.beginRead(0);
+		BTString &buf2 = oq.beginRead(1);
+		BTString &buf3 = oq.beginRead(2);
+		BTString &buf4 = oq.beginRead(3);
+		BTString &buf5 = oq.beginRead(4);
 		assert_eq(5, oq.numStarted());
 		assert_eq(0, oq.numFinished());
 		buf1.install("A\n");
