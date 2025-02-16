@@ -13,13 +13,15 @@ class LockWrap {
 	LockWrap(T *obj) : obj(obj) {};
 	~LockWrap() { delete obj; };
 
-	T *lock() {
-		mutex_.lock();
+	T *lock() const {
+		void *p = (void *)&mutex_;
+		((MUTEX_T *)p)->lock();
 		return obj;
 	}
 
-	void unlock() {
-		mutex_.unlock();
+	void unlock() const {
+		void *p = (void *)&mutex_;
+		((MUTEX_T *)p)->unlock();
 	}
 };
 #endif

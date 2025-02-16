@@ -28,8 +28,9 @@
 #include "mem_ids.h"
 #include "lock_wrap.h"
 #include <atomic>
-#include <shared_mutex>
 #include <mutex>
+#include <shared_mutex>
+
 /**
  * Encapsulates a list of lines of output.  If the earliest as-yet-unreported
  * read has id N and Bowtie 2 wants to write a record for read with id N+1, we
@@ -57,7 +58,8 @@ class OutputQueue {
 							finished_(new EList<bool>(RES_CAT)),
 							reorder_(reorder),
 							threadSafe_(threadSafe),
-							mutex_m() {
+							mutex_m(),
+							mutex_cur() {
 		assert(nthreads <= 1 || threadSafe);
 	}
 
@@ -75,9 +77,9 @@ class OutputQueue {
 	/**
 	 * Return the number of records currently being buffered.
 	 */
-	size_t size() {
-		auto __line = lines_.lock();
-		int res = __line->size();
+	size_t size() const {
+		auto __lines = lines_.lock();
+		int res = __lines->size();
 		lines_.unlock();
 		return res;
 	}

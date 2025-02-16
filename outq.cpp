@@ -26,39 +26,37 @@
 void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
 	nstarted_++;
 	if (reorder_) {
-		auto __line = lines_.lock();
-		std::shared_lock<std::shared_mutex> lock(mutex_cur);
-		assert_geq(rdid, cur_);
+		EList<bool> *__started = nullptr;
+		EList<bool> *__finished = nullptr;
+		// assert_geq(rdid, cur_);
 		// assert_eq(lines_.size(), finished_.size());
 		// assert_eq(lines_.size(), started_.size());
-		if (rdid - cur_ >= __line->size()) {
+		auto __lines = lines_.lock();
+		std::shared_lock<std::shared_mutex> lock(mutex_cur);
+		if (rdid - cur_ >= __lines->size()) {
 			// Make sure there's enough room in lines_, started_ and finished_
-			size_t oldsz = __line->size();
-			__line->resize(rdid - cur_ + 1);
-			int size = __line->size();
+			size_t oldsz = __lines->size();
+			__lines->resize(rdid - cur_ + 1);
+			int newsz = __lines->size();
 			lines_.unlock();
 
-			auto __started = started_.lock();
-			auto __finished = finished_.lock();
+			__started = started_.lock();
 			__started->resize(rdid - cur_ + 1);
-			__finished->resize(rdid - cur_ + 1);
 
-			for (size_t i = oldsz; i < size; i++) {
+			__finished = finished_.lock();
+			__finished->resize(rdid - cur_ + 1);
+			for (size_t i = oldsz; i < oldsz; i++) {
 				(*__started)[i] = (*__finished)[i] = false;
 			}
-
-			started_.unlock();
-			finished_.unlock();
 		} else {
 			lines_.unlock();
 		}
-		auto __started = started_.lock();
+		if (__started == nullptr) {
+			__started = started_.lock();
+			__finished = finished_.lock();
+		}
 		(*__started)[rdid - cur_] = true;
-		started_.unlock();
-
-		auto __finished = finished_.lock();
 		(*__finished)[rdid - cur_] = false;
-		finished_.unlock();
 	}
 }
 
@@ -67,31 +65,27 @@ void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
  */
 void OutputQueue::finishRead(const BTString &rec, TReadId rdid, size_t threadId) {
 	if (reorder_) {
-		std::shared_lock<std::shared_mutex> lock(mutex_cur);
-		assert_geq(rdid, cur_);
+		// assert_geq(rdid, cur_);
 		// assert_eq(lines_.size(), finished_.size());
 		// assert_eq(lines_.size(), started_.size());
 		// assert_lt(rdid - cur_, lines_.size());
 		// assert(started_[rdid - cur_]);
 		// assert(!finished_[rdid - cur_]);
-		auto __line = lines_.lock();
-		(*__line)[rdid - cur_] = rec;
+		auto __lines = lines_.lock();
+		(*__lines)[rdid - cur_] = rec;
 		lines_.unlock();
 
-		nfinished_++;
-
 		auto __finished = finished_.lock();
+		std::shared_lock<std::shared_mutex> lock(mutex_cur);
 		(*__finished)[rdid - cur_] = true;
-		finished_.unlock();
-		lock.release();
+		flush(false, false); // don't force; already have lock
 
-		flush(false); // don't force; already have lock
+		nfinished_++;
 	} else {
-		// obuf_ is the OutFileBuf for the output file
 		ThreadSafe *t = new ThreadSafe(&mutex_m, threadSafe_);
+		// obuf_ is the OutFileBuf for the output file
 		obuf_.writeString(rec);
 		delete t;
-
 		nfinished_++;
 		nflushed_++;
 	}
@@ -104,42 +98,40 @@ void OutputQueue::flush(bool force, bool getLock) {
 	if (!reorder_) {
 		return;
 	}
-	// ThreadSafe t(&mutex_m, getLock && threadSafe_);
 	size_t nflush = 0;
 	auto __finished = finished_.lock();
 	while (nflush < __finished->size() && (*__finished)[nflush]) {
 		// assert(started_[nflush]);
 		nflush++;
 	}
-	finished_.unlock();
-
 	// Waiting until we have several in a row to flush cuts down on copies
 	// (but requires more buffering)
 	if (force || nflush >= NFLUSH_THRESH) {
-		auto __line = lines_.lock();
-
+		auto __lines = lines_.lock();
 		ThreadSafe *t = new ThreadSafe(&mutex_m, getLock && threadSafe_);
 		for (size_t i = 0; i < nflush; i++) {
 			// assert(started_[i]);
 			// assert(finished_[i]);
-			obuf_.writeString((*__line)[i]);
+			obuf_.writeString((*__lines)[i]);
 		}
 		delete t;
-
-		__line->erase(0, nflush);
+		__lines->erase(0, nflush);
 		lines_.unlock();
 
 		auto __started = started_.lock();
 		__started->erase(0, nflush);
 		started_.unlock();
 
-		__finished = finished_.lock();
 		__finished->erase(0, nflush);
 		finished_.unlock();
 
-		nflushed_ += nflush;
 		std::unique_lock<std::shared_mutex> lock(mutex_cur);
 		cur_ += nflush;
+		lock.unlock();
+
+		nflushed_ += nflush;
+	} else {
+		finished_.unlock();
 	}
 }
 
