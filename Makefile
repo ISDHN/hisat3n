@@ -55,7 +55,7 @@ ifneq (,$(findstring Darwin,$(shell uname)))
 	MACOS = 1
 endif
 
-EXTRA_FLAGS += -DPOPCNT_CAPABILITY -std=c++11
+EXTRA_FLAGS += -DPOPCNT_CAPABILITY -std=c++20 -Wno-sign-compare -Wno-deprecated-declarations -Wno-parentheses -Wno-unused-variable -Wno-char-subscripts -Wno-unused-but-set-variable -Wno-volatile -Wno-reorder -Wno-delete-non-virtual-dtor -Wno-bool-compare -Wno-class-memaccess -Wno-int-in-bool-context -Wno-return-type
 INC += -I. -I third_party 
 
 MM_DEF = 
@@ -190,10 +190,10 @@ SSE_FLAG=-msse2
 
 DEBUG_FLAGS    = -O0 -g3 $(BITS_FLAG) $(SSE_FLAG)
 DEBUG_DEFS     = -DCOMPILER_OPTIONS="\"$(DEBUG_FLAGS) $(EXTRA_FLAGS)\""
-RELEASE_FLAGS  = -O3 $(BITS_FLAG) $(SSE_FLAG) -funroll-loops -g3
+RELEASE_FLAGS  = -O3 $(BITS_FLAG) $(SSE_FLAG) -funroll-loops -g3 -flto -ftree-vectorize -march=native #-fsanitize=address 
 RELEASE_DEFS   = -DCOMPILER_OPTIONS="\"$(RELEASE_FLAGS) $(EXTRA_FLAGS)\""
 NOASSERT_FLAGS = -DNDEBUG
-FILE_FLAGS     = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE
+FILE_FLAGS     = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -DNO_SPINLOCK
 HT2LIB_FLAGS   = -DHISAT2_BUILD_LIB
 ifeq (1,$(USE_SRA))
 	ifeq (1, $(MACOS))
