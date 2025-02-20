@@ -635,17 +635,20 @@ int hisat_3n_table_2() {
         blockLineCount ++;
     }
 
+    BS::synced_stream sout;
+
     // submit all blocks to thread pool
-    BS::multi_future<vector<string>> outputFuture = pool.submit_sequence(0, blocks.size(), [&](size_t i) {
+    BS::multi_future<void> outputFuture = pool.submit_sequence(0, blocks.size(), [&](size_t i) {
         const auto &b = blocks[i];
-        return vector<string>{ string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock) };
+        sout.println(string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock));
     });
 
-    for (const auto &output: outputFuture.get()) {
-        for (const auto& line: output) {
-            cout << line << endl;
-        }
-    }
+    // for (const auto &output: outputFuture.get()) {
+    //     for (const auto& line: output) {
+    //         cout << line << endl;
+    //     }
+    // }
+    outputFuture.wait();
     return 0;
 }
 
