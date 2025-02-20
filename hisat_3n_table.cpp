@@ -360,6 +360,7 @@ int hisat_3n_table()
 
 #include "third_party/mio/mio.hpp"
 #include "third_party/BS_thread_pool.hpp"
+#include "third_party/concurrentqueue.h"
 
 #include <span>
 #include <ranges>
@@ -635,20 +636,22 @@ int hisat_3n_table_2() {
         blockLineCount ++;
     }
 
-    BS::synced_stream sout;
+    moodycamel::ConcurrentQueue<string> outputQueue;
 
     // submit all blocks to thread pool
-    BS::multi_future<void> outputFuture = pool.submit_sequence(0, blocks.size(), [&](size_t i) {
+    pool.detach_sequence(0, blocks.size(), [&](size_t i) {
         const auto &b = blocks[i];
-        sout.println(string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock));
+        outputQueue.enqueue(string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock));
     });
 
-    // for (const auto &output: outputFuture.get()) {
-    //     for (const auto& line: output) {
-    //         cout << line << endl;
-    //     }
-    // }
-    outputFuture.wait();
+    while (pool.get_tasks_total() || outputQueue.size_approx()) {
+        vector<string> s;
+        outputQueue.try_dequeue_bulk(s.begin(), 10000);
+        for (const auto &line: s) {
+            cout << line << endl;
+        }
+    }
+
     return 0;
 }
 
