@@ -58,7 +58,6 @@ public:
  * basic class to store reference position information
  */
 class Position{
-    mutex mutex_;
 public:
     string chromosome; // reference chromosome name
     long long int location; // 1-based position
@@ -93,6 +92,11 @@ public:
      */
 
     void set (string& inputChr, long long int inputLoc) {
+        chromosome = inputChr;
+        location = inputLoc + 1;
+    }
+
+    void set (string_view inputChr, long long int inputLoc) {
         chromosome = inputChr;
         location = inputLoc + 1;
     }
@@ -170,7 +174,6 @@ public:
      * append the SAM information into this position.
      */
     void appendBase (PosQuality& input, Alignment& a) {
-        mutex_.lock();
         if (appendReadNameID(input,a)) {
             if (input.converted) {
                 convertedQualities += input.qual;
@@ -178,7 +181,6 @@ public:
                 unconvertedQualities += input.qual;
             }
         }
-        mutex_.unlock();
     }
 };
 

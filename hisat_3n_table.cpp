@@ -593,7 +593,7 @@ struct Task {
 int hisat_3n_table_2() {
     ios::sync_with_stdio(false);
 
-	BS::thread_pool pool;
+	BS::thread_pool pool(nThreads);
 
 	ChromosomeDB chromosomeDB(refFileName, addedChrName, removedChrName);
 
@@ -629,8 +629,9 @@ int hisat_3n_table_2() {
             block = string_view(block.begin(), line.end());
 
             auto [range, refBlock] = chromosomeDB.getChromosomeInRefFile(string(currentChromosome.value()));
-            blocks.push_back(Task { .chromosome = currentChromosome.value(), .alignmentBlock = block, .refBlock = refBlock });
+            blocks.emplace_back(Task { .chromosome = currentChromosome.value(), .alignmentBlock = block, .refBlock = refBlock });
 
+            blockLineCount = 1;
             block = line.substr(0, 0);
             currentChromosome = chromosome;
         }
@@ -638,25 +639,153 @@ int hisat_3n_table_2() {
         blockLineCount ++;
     }
 
-    moodycamel::ConcurrentQueue<string> outputQueue;
+    cerr << "Total blocks: " << to_string(blocks.size()) << "\n";
+
+    moodycamel::ConcurrentQueue<vector<string>> outputQueue;
+    auto refFile = chromosomeDB.refFile();
 
     // submit all blocks to thread pool
-    pool.detach_sequence(0, blocks.size(), [&](size_t i) {
+    pool.detach_loop(0, blocks.size(), [&](size_t i) {
         const auto &b = blocks[i];
-        outputQueue.enqueue(string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock));
+
+        vector<Position*> refPositions;
+
+        char lastBase = 'X';
+        size_t location = 0;
+
+        for (auto it = LinesIter(b.refBlock); !it.empty(); ++it) {
+            // Positions::loadMore
+            auto line = string(*it);
+            assert(line.front() != '>');
+            if (line.empty()) { continue; }
+
+            for (int i = 0; i < line.size(); i++) {
+                line[i] = toupper(line[i]);
+            }
+
+            // Positions::appendRefPosition
+            Position *newPos = new Position();
+            // check the base one by one
+            char* base;
+            for (int i = 0; i < line.size(); i++) {
+                newPos->set(b.chromosome, location+i);
+                base = &line[i];
+                if (CG_only) {
+                    if (lastBase == 'C' && *base == 'G') {
+                        refPositions.back()->set('+');
+                        newPos->set('-');
+                    }
+                } else {
+                    if (*base == convertFrom) {
+                        newPos->set('+');
+                    } else if (*base == convertFromComplement) {
+                        newPos->set('-');
+                    }
+                }
+                refPositions.emplace_back(newPos);
+                lastBase = *base;
+            }
+            location += line.size();
+        }
+
+        // hisat_3n_table::for
+
+        for (auto it = LinesIter(b.alignmentBlock); !it.empty(); ++it) {
+            string line = string(*it);
+
+            if (line.empty() || line.front() == '@') {
+                continue;
+            }
+
+            auto coordinate = getSAMChromosomePos(line);
+            if (!coordinate.has_value()) {
+                continue;
+            }
+
+            auto [samChromosome, samPos] = coordinate.value();
+
+            // Positions::append
+            Alignment newAlignment;
+            newAlignment.parse(&line);
+
+            // Positions::appendPositions
+
+            if (!newAlignment.mapped || newAlignment.bases.empty()) {
+                return;
+            }
+            long long int startPos = newAlignment.location; // 1-based position
+            // find the first reference position in pool.
+
+            // Positions::getIndex
+            int index = startPos - refPositions[0]->location;
+
+            
+            for (int i = 0; i < newAlignment.sequence.size(); i++) {
+                PosQuality* b = &newAlignment.bases[i];
+                if (b->remove) {
+                    continue;
+                }
+
+                Position* pos = refPositions[index+b->refPos];
+                assert (pos->location == startPos + b->refPos);
+
+                if (pos->strand == '?') {
+                    // this is for CG-only mode. read has a 'C' or 'G' but not 'CG'.
+                    continue;
+                }
+                pos->appendBase(newAlignment.bases[i], newAlignment);
+            }
+        }
+
+        // Positions::moveAllToOutput (skip, just operate on refPositions)
+        vector<string> output;
+        for (const auto& pos: refPositions) {
+            output.emplace_back(
+                string(pos->chromosome + '\t'
+                          + to_string(pos->location) + '\t'
+                          + pos->strand + '\t'
+                          + pos->convertedQualities + '\t'
+                          + to_string(pos->convertedQualities.size()) + '\t'
+                          + pos->unconvertedQualities + '\t'
+                          + to_string(pos->unconvertedQualities.size())));
+        }
+        outputQueue.enqueue(output);
     });
 
+    ostream* out_ = &cout;
+    out_ = &cout;
+    ofstream tableFile;
+    if (!outputFileName.empty()) {
+        tableFile.open(outputFileName, ios_base::out);
+        out_ = &tableFile;
+    }
+
+    *out_ << "ref\tpos\tstrand\tconvertedBaseQualities\tconvertedBaseCount\tunconvertedBaseQualities\tunconvertedBaseCount\n";
+
     while (pool.get_tasks_total() || outputQueue.size_approx()) {
-        vector<string> s;
-        if (outputQueue.try_dequeue_bulk(s.begin(), 10000) < 5000) {
-            cout << "Sleep\n";
-            this_thread::sleep_for(chrono::microseconds(10));
+        vector<string> res;
+        if (!outputQueue.try_dequeue(res)) {
+            this_thread::sleep_for(chrono::milliseconds(100));
         }
-        for (const auto &line: s) {
-            cout << line << endl;
+        for (const auto &s: res) {
+            *out_ << s << endl;            
         }
     }
 
+    pool.wait();
+
+    this_thread::sleep_for(chrono::seconds(1));
+    while (outputQueue.size_approx()) {
+        vector<string> res;
+        if (!outputQueue.try_dequeue(res)) {
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        for (const auto &s: res) {
+            *out_ << s << endl;            
+        }
+    }
+
+    tableFile.close();
     return 0;
 }
 
