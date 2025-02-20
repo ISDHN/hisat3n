@@ -18,10 +18,12 @@
  */
 
 
+#include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <getopt.h>
 #include <stdexcept>
+#include <thread>
 #include "position_3n_table.h"
 #include "utility_3n_table.h"
 
@@ -646,7 +648,10 @@ int hisat_3n_table_2() {
 
     while (pool.get_tasks_total() || outputQueue.size_approx()) {
         vector<string> s;
-        outputQueue.try_dequeue_bulk(s.begin(), 10000);
+        if (outputQueue.try_dequeue_bulk(s.begin(), 10000) < 5000) {
+            cout << "Sleep\n";
+            this_thread::sleep_for(chrono::microseconds(10));
+        }
         for (const auto &line: s) {
             cout << line << endl;
         }
