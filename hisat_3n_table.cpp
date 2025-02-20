@@ -18,9 +18,12 @@
  */
 
 
+#include <cstddef>
 #include <iostream>
 #include <getopt.h>
+#include <stdexcept>
 #include "position_3n_table.h"
+#include "utility_3n_table.h"
 
 using namespace std;
 
@@ -353,6 +356,296 @@ int hisat_3n_table()
     outputThread.join();
     delete positions;
     return 0;
+}
+
+#include "third_party/mio/mio.hpp"
+#include "third_party/BS_thread_pool.hpp"
+
+#include <span>
+#include <ranges>
+#include <string_view>
+
+class LinesIter: public std::iterator<std::input_iterator_tag, string_view, ptrdiff_t, string_view, string_view> {
+public:
+	explicit LinesIter(string_view content): content(content) {
+        parse_line();        
+	}
+
+	LinesIter& operator++() {
+        if (line.end() == content.end()) {
+            content = content.substr(line.size());
+        } else {
+            content = content.substr(line.size() + 1);
+            parse_line();
+        }
+        return *this;
+	}
+
+    LinesIter operator++(int) {
+        auto ret = *this;
+        ++(*this);
+        return ret;
+    }
+
+    reference operator*() const {
+        return line;
+    }
+
+    bool operator==(const LinesIter &o) const {
+        return content.begin() == o.content.begin() && content.end() == o.content.end();
+    }
+
+    bool operator!=(const LinesIter &o) const {
+        return !(*this == o);
+    }
+
+    bool empty() const {
+        return content.empty();
+    }
+    size_t size() const {
+        return content.size();
+    }
+
+private:
+	void parse_line() {
+        for (size_t i = 0; i < content.size(); i++) {
+            if (content[i] == '\n') {
+                line = string_view(content.begin(), content.begin() + i);
+                return;
+            }
+        }
+        line = content;
+	}
+
+	string_view content;
+	string_view line;
+};
+
+class ChromosomeDB {
+public:
+	using Range = pair<size_t, size_t>;
+	ChromosomeDB(string inputRefFileName, bool inputAddedChrName, bool inputRemovedChrName): addedChrName(inputAddedChrName), removedChrName(inputRemovedChrName) {
+		std::error_code error;
+		refFileMap.map(inputRefFileName, error);
+		refFile_ = std::span(refFileMap.data(), refFileMap.size());
+		assert(!error);
+		LoadChromosomeNamesPos();
+	}
+
+	tuple<Range, string_view> getChromosomeInRefFile(string targetChromosome) {
+		size_t idx = std::lower_bound(db.begin(), db.end(), ChromosomeFilePosition(std::move(targetChromosome), Range(), string_view())) - db.begin();
+		assert(db[idx].name() == targetChromosome);
+		return make_tuple(db[idx].range(), db[idx].slice());
+	}
+
+    string_view refFile() {
+        return string_view(refFile_);
+    }
+
+private:
+	class ChromosomeFilePosition {
+	public:
+		ChromosomeFilePosition(string&& name, Range &&range, string_view slice) : name_(name), range_(range), slice_(slice) {}
+
+		Range range() {
+			return range_;
+		}
+
+		const string& name() {
+			return name_;
+		}
+
+		string_view slice() {
+			return slice_;
+		}
+
+		inline bool operator<(const ChromosomeFilePosition& o) {
+			assert(name_ != o.name_);
+			return name_ < o.name_;
+		}
+
+	private:
+		string name_;
+		Range range_;		
+		string_view slice_;
+	};
+
+    /**
+     * given reference line (start with '>'), extract the chromosome information.
+     * this is important when there is space in chromosome name. the SAM information only contain the first word.
+     */
+    string getChrName(string_view inputLine) {
+        string name;
+        for (int i = 1; i < inputLine.size(); i++)
+        {
+            char c = inputLine[i];
+            if (isspace(c)){
+                break;
+            }
+            name += c;
+        }
+
+        if(removedChrName) {
+            if(name.find("chr") == 0) {
+                name = name.substr(3);
+            }
+        } else if(addedChrName) {
+            if(name.find("chr") != 0) {
+                name = string("chr") + name;
+            }
+        }
+        return name;
+    }
+
+	void LoadChromosomeNamesPos() {
+        string_view line;
+		size_t contentStart = 0; // relative offset in the file
+		optional<string> chromosome = nullopt;
+
+		// relative offsets in the file
+		size_t lineStart = 0, lineEnd = 0;
+		size_t lineBpCount = 0, totalBpCount = 0, location = 0;
+		// totalBpCount is the total bp count of current chromosome
+		// location is the start position of current chromosome, should always be 0
+		// (every chromosome should map to only one record)
+        for (size_t i = 0; i < refFile_.size(); ++i) {
+            if (refFile_[i] == '\n') {
+                line = string_view(refFile_.data() + lineStart, i - lineStart);
+				if (line.front() == '>') {
+					if (chromosome.has_value()) {
+						db.push_back(ChromosomeFilePosition(std::move(chromosome.value()), Range(location, location + totalBpCount), string_view(refFile_.data() + contentStart, lineEnd - contentStart)));
+					}
+					chromosome = getChrName(line);
+					contentStart = i + 1;
+					totalBpCount = 0;
+				} else {
+					totalBpCount += lineBpCount;
+				}
+                lineStart = i + 1; // skip '\n'
+				lineEnd = i;
+				lineBpCount = 0;
+            }
+			if (!isspace(refFile_[i])) lineBpCount ++;
+        }
+
+        if (lineStart < refFile_.size()) {
+			totalBpCount += lineBpCount;
+			line = string_view(refFile_.data() + lineStart, refFile_.size() - lineStart);
+			assert(line.front() != '>');
+			assert(chromosome.has_value());
+			db.push_back(ChromosomeFilePosition(std::move(chromosome.value()), Range(location, location + totalBpCount), string_view(refFile_.data() + contentStart, refFile_.size() - contentStart)));
+        }
+
+		sort(db.begin(), db.end());
+	}
+
+	std::vector<ChromosomeFilePosition> db;
+	mio::mmap_source refFileMap;
+	std::span<const char> refFile_;
+    bool addedChrName = false;
+    bool removedChrName = false;
+};
+
+/**
+ * give a SAM line, extract the chromosome and position information.
+ * return true if the SAM line is mapped. return false if SAM line is not maped.
+ */
+optional<tuple<string_view, long long int>> getSAMChromosomePos(string_view line) {
+    string_view chr;
+    long long int pos;
+
+    int startPosition = 0;
+    int endPosition = 0;
+    int count = 0;
+
+    while ((endPosition = line.find("\t", startPosition)) != string::npos) {
+        if (count == 2) {
+            chr = line.substr(startPosition, endPosition - startPosition);
+        } else if (count == 3) {
+            pos = stoll(string(line.substr(startPosition, endPosition - startPosition)));
+            if (chr == "*") {
+                return nullopt;
+            } else {
+                return make_tuple(chr, pos);
+            }
+        }
+        startPosition = endPosition + 1;
+        count++;
+    }
+    return nullopt;
+}
+
+string print_file_block(string_view file, string_view block) {
+    auto l = block.begin() - file.begin();
+    auto r = block.end() - file.begin();
+    return string("[") + to_string(l) + ", " + to_string(r) + ")";
+}
+
+struct Task {
+    string chromosome;
+    string_view alignmentBlock;
+    string_view refBlock;
+};
+
+int hisat_3n_table_2() {
+    ios::sync_with_stdio(false);
+
+	BS::thread_pool pool;
+
+	ChromosomeDB chromosomeDB(refFileName, addedChrName, removedChrName);
+
+	assert(!standardInMode);
+	mio::mmap_source alignmentFileMap(alignmentFileName);
+	string_view alignmentFile(alignmentFileMap.data(), alignmentFileMap.size());
+
+    constexpr size_t blockLineLimit = 1048576;
+    size_t blockLineCount = 0;
+    vector<Task> blocks;
+    string_view block = alignmentFile.substr(0, 0);
+    optional<string> currentChromosome;
+
+    // Ensure all Alignments (lines) in a block refer to the same DNA, try to split file 
+    // into blocks on the DNA boundries (need the file to be sorted). 
+    // Force split if block is too big that reaches blockLineLimit.
+    for (auto it = LinesIter(alignmentFile); !it.empty(); ++it) {
+        auto line = *it;
+        if (line.front() == '@') {            
+            continue;
+        }
+        auto coordinate = getSAMChromosomePos(line);
+        if (!coordinate.has_value()) {
+            continue;
+        }
+        auto [chromosome, location] = coordinate.value();
+
+        if (!currentChromosome.has_value()) {
+            currentChromosome = chromosome;
+        }
+
+        if (blockLineCount >= blockLineLimit || currentChromosome.value() != chromosome) {
+            block = string_view(block.begin(), line.end());
+
+            auto [range, refBlock] = chromosomeDB.getChromosomeInRefFile(string(currentChromosome.value()));
+            blocks.push_back(Task { .chromosome = currentChromosome.value(), .alignmentBlock = block, .refBlock = refBlock });
+
+            block = line.substr(0, 0);
+            currentChromosome = chromosome;
+        }
+
+        blockLineCount ++;
+    }
+
+    // submit all blocks to thread pool
+    BS::multi_future<vector<string>> outputFuture = pool.submit_sequence(0, blocks.size(), [&](size_t i) {
+        const auto &b = blocks[i];
+        return vector<string>{ string("Worker ") + to_string(BS::this_thread::get_index().value()) + "process block " + to_string(i) + "DNA name = " + b.chromosome + ", alignmentBlock = " + print_file_block(alignmentFile, b.alignmentBlock) + ", refBlock = " + print_file_block(chromosomeDB.refFile(), b.refBlock) };
+    });
+
+    for (const auto &output: outputFuture.get()) {
+        for (const auto& line: output) {
+            cout << line << endl;
+        }
+    }
 }
 
 int main(int argc, const char** argv)

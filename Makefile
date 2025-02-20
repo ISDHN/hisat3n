@@ -55,7 +55,7 @@ ifneq (,$(findstring Darwin,$(shell uname)))
 	MACOS = 1
 endif
 
-EXTRA_FLAGS += -DPOPCNT_CAPABILITY -std=c++20 -Wno-sign-compare -Wno-deprecated-declarations -Wno-parentheses -Wno-unused-variable -Wno-char-subscripts -Wno-unused-but-set-variable -Wno-volatile -Wno-reorder -Wno-delete-non-virtual-dtor -Wno-bool-compare -Wno-class-memaccess -Wno-int-in-bool-context -Wno-return-type
+EXTRA_FLAGS += -DPOPCNT_CAPABILITY -std=c++23 -Wno-sign-compare -Wno-deprecated-declarations -Wno-parentheses -Wno-unused-variable -Wno-char-subscripts -Wno-unused-but-set-variable -Wno-volatile -Wno-reorder -Wno-delete-non-virtual-dtor -Wno-bool-compare -Wno-class-memaccess -Wno-int-in-bool-context -Wno-return-type
 INC += -I. -I third_party 
 
 MM_DEF = 
@@ -285,7 +285,9 @@ SRC_PKG_LIST = $(wildcard *.h) \
 
 BIN_PKG_LIST = $(GENERAL_LIST)
 
-.PHONY: all allall both both-debug
+.PHONY: all allall both both-debug hisat-3n-table-only
+
+hisat-3n-table-only: hisat-3n-table
 
 all: $(HISAT2_BIN_LIST)
 

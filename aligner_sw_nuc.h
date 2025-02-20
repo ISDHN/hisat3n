@@ -188,7 +188,7 @@ class NBest {
 
 public:
 
-	NBest<T>() { nelt_ = nbest_ = n_ = 0; }
+	NBest() { nelt_ = nbest_ = n_ = 0; }
 	
 	bool inited() const { return nelt_ > 0; }
 	
