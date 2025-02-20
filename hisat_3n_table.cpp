@@ -646,6 +646,7 @@ int hisat_3n_table_2() {
             cout << line << endl;
         }
     }
+    return 0;
 }
 
 int main(int argc, const char** argv)
@@ -654,7 +655,7 @@ int main(int argc, const char** argv)
 
     try {
         parseOptions(argc, argv);
-        ret = hisat_3n_table();
+        ret = hisat_3n_table_2();
     } catch(std::exception& e) {
         cerr << "Error: Encountered exception: '" << e.what() << "'" << endl;
         cerr << "Command: ";
