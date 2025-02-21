@@ -740,14 +740,17 @@ int hisat_3n_table_2() {
         // Positions::moveAllToOutput (skip, just operate on refPositions)
         vector<string> output;
         for (auto pos: refPositions) {
-            output.emplace_back(
-                string(pos->chromosome) + '\t'
-                          + to_string(pos->location) + '\t'
-                          + pos->strand + '\t'
-                          + pos->convertedQualities + '\t'
-                          + to_string(pos->convertedQualities.size()) + '\t'
-                          + pos->unconvertedQualities + '\t'
-                          + to_string(pos->unconvertedQualities.size()));
+            if (pos->empty() || pos->strand == '?') {
+            } else {
+                output.emplace_back(
+                    string(pos->chromosome) + '\t'
+                            + to_string(pos->location) + '\t'
+                            + pos->strand + '\t'
+                            + pos->convertedQualities + '\t'
+                            + to_string(pos->convertedQualities.size()) + '\t'
+                            + pos->unconvertedQualities + '\t'
+                            + to_string(pos->unconvertedQualities.size()));
+            }
             delete pos;
         }
         outputQueue.enqueue(output);
