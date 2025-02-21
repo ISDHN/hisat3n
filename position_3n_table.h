@@ -59,7 +59,7 @@ public:
  */
 class Position{
 public:
-    string chromosome; // reference chromosome name
+    string_view chromosome; // reference chromosome name
     long long int location; // 1-based position
     char strand; // +(REF) or -(REF-RC)
     string convertedQualities; // each char is a mapping quality on this position for converted base.
@@ -68,7 +68,6 @@ public:
                               // readNameIDs is to make sure no read contribute 2 times in same position.
 
     void initialize() {
-        chromosome.clear();
         location = -1;
         strand = '?';
         convertedQualities.clear();

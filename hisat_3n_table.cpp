@@ -413,7 +413,7 @@ private:
 	void parse_line() {
         for (size_t i = 0; i < content.size(); i++) {
             if (content[i] == '\n') {
-                line = string_view(content.begin(), content.begin() + i);
+                line = content.substr(0, i);
                 return;
             }
         }
@@ -463,7 +463,7 @@ private:
 		}
 
 		inline bool operator<(const ChromosomeFilePosition& o) {
-			assert(name_ != o.name_);
+			// assert(name_ != o.name_);
 			return name_ < o.name_;
 		}
 
@@ -561,7 +561,7 @@ optional<tuple<string_view, long long int>> getSAMChromosomePos(string_view line
     int endPosition = 0;
     int count = 0;
 
-    while ((endPosition = line.find("\t", startPosition)) != string::npos) {
+    while ((endPosition = line.find("\t", startPosition)) != string_view::npos) {
         if (count == 2) {
             chr = line.substr(startPosition, endPosition - startPosition);
         } else if (count == 3) {
@@ -649,6 +649,7 @@ int hisat_3n_table_2() {
         const auto &b = blocks[i];
 
         vector<Position*> refPositions;
+        refPositions.reserve(b.refBlock.size() / 2);
 
         char lastBase = 'X';
         size_t location = 0;
@@ -664,10 +665,10 @@ int hisat_3n_table_2() {
             }
 
             // Positions::appendRefPosition
-            Position *newPos = new Position();
             // check the base one by one
             char* base;
             for (int i = 0; i < line.size(); i++) {
+                Position *newPos = new Position();
                 newPos->set(b.chromosome, location+i);
                 base = &line[i];
                 if (CG_only) {
@@ -701,7 +702,6 @@ int hisat_3n_table_2() {
             if (!coordinate.has_value()) {
                 continue;
             }
-
             auto [samChromosome, samPos] = coordinate.value();
 
             // Positions::append
@@ -711,14 +711,14 @@ int hisat_3n_table_2() {
             // Positions::appendPositions
 
             if (!newAlignment.mapped || newAlignment.bases.empty()) {
-                return;
+                continue;
             }
             long long int startPos = newAlignment.location; // 1-based position
             // find the first reference position in pool.
 
             // Positions::getIndex
+            assert(!refPositions.empty());
             int index = startPos - refPositions[0]->location;
-
             
             for (int i = 0; i < newAlignment.sequence.size(); i++) {
                 PosQuality* b = &newAlignment.bases[i];
@@ -739,15 +739,16 @@ int hisat_3n_table_2() {
 
         // Positions::moveAllToOutput (skip, just operate on refPositions)
         vector<string> output;
-        for (const auto& pos: refPositions) {
+        for (auto pos: refPositions) {
             output.emplace_back(
-                string(pos->chromosome + '\t'
+                string(pos->chromosome) + '\t'
                           + to_string(pos->location) + '\t'
                           + pos->strand + '\t'
                           + pos->convertedQualities + '\t'
                           + to_string(pos->convertedQualities.size()) + '\t'
                           + pos->unconvertedQualities + '\t'
-                          + to_string(pos->unconvertedQualities.size())));
+                          + to_string(pos->unconvertedQualities.size()));
+            delete pos;
         }
         outputQueue.enqueue(output);
     });
