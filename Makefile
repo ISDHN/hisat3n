@@ -21,10 +21,10 @@
 #
 
 INC =
-GCC_PREFIX = $(shell dirname `which gcc`)
+GCC_PREFIX = $(shell dirname `which icx`)
 GCC_SUFFIX =
-CC = $(GCC_PREFIX)/gcc$(GCC_SUFFIX)
-CPP = $(GCC_PREFIX)/g++$(GCC_SUFFIX)
+CC = $(GCC_PREFIX)/icx$(GCC_SUFFIX)
+CPP = $(GCC_PREFIX)/icpx$(GCC_SUFFIX)
 CXX = $(CPP)
 HEADERS = $(wildcard *.h)
 BOWTIE_MM = 1
@@ -516,7 +516,7 @@ libhisat2lib.so: $(HT2LIB_SHARED_RELEASE_OBJS)
 # repeatexp
 #
 repeatexp:
-	g++ -o repeatexp repeatexp.cpp -I hisat2lib libhisat2lib.a
+	$(CXX) -o repeatexp repeatexp.cpp -I hisat2lib libhisat2lib.a
 
 hisat2: ;
 
