@@ -24,6 +24,8 @@
 #include <queue>
 #include <algorithm>
 
+#include "oneapi/tbb/concurrent_queue.h"
+
 using namespace std;
 
 /**
@@ -187,8 +189,7 @@ class MD_tag : public string_search {
 template <typename T>
 class SafeQueue {
   private:
-	mutex mutex_;
-	queue<T> queue_;
+	oneapi::tbb::concurrent_queue<T> queue_;
 
 	string getReadName(string *line) {
 		int startPosition = 0;
@@ -200,52 +201,24 @@ class SafeQueue {
 	}
 
   public:
-	void pop() {
-		mutex_.lock();
-		queue_.pop();
-		mutex_.unlock();
-	}
-
-	T front() {
-		mutex_.lock();
-		T value = queue_.front();
-		mutex_.unlock();
-		return value;
-	}
-
-	int size() {
-		mutex_.lock();
-		int s = queue_.size();
-		mutex_.unlock();
-		return s;
-	}
-
 	/**
 	 * return true if the queue is not empty and pop front and get value.
 	 * return false if the queue is empty.
 	 */
 	bool popFront(T &value) {
-		mutex_.lock();
-		bool isEmpty = queue_.empty();
-		if (!isEmpty) {
-			value = queue_.front();
-			queue_.pop();
-		}
-		mutex_.unlock();
-		return !isEmpty;
+		return queue_.try_pop(value);
 	}
 
 	void push(T value) {
-		mutex_.lock();
 		queue_.push(value);
-		mutex_.unlock();
 	}
 
 	bool empty() {
-		mutex_.lock();
-		bool check = queue_.empty();
-		mutex_.unlock();
-		return check;
+		return queue_.empty();
+	}
+
+	int size() {
+		return queue_.unsafe_size();
 	}
 };
 

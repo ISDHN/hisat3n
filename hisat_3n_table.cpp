@@ -32,7 +32,7 @@ bool uniqueOnly = false;
 bool multipleOnly = false;
 bool CG_only = false;
 int nThreads = 1;
-uint32_t linePerThread = 1000;
+uint32_t linePerThread = 0;
 long long int samPos;						// the position of current SAM line.
 long long int reloadPos = loadingBlockSize; // the position in reference that we need to reload.
 long long int lastPos = 0;					// the position on last SAM line. compare lastPos with samPos to make sure the SAM is sorted.
@@ -298,16 +298,16 @@ int hisat_3n_table() {
 			positions->appendingFinished();
 			positions->moveAllToOutput();
 			positions->loadNewChromosome(samChromosome);
-			reloadPos = loadingBlockSize;
 			lastPos = 0;
 		}
+		// load the entire chromosome
 		// if the samPos is larger than reloadPos, load 1 loadingBlockSize bp in from reference.
-		while (samPos > reloadPos) {
-			positions->appendingFinished();
-			positions->moveBlockToOutput();
-			positions->loadMore();
-			reloadPos += loadingBlockSize;
-		}
+		// while (samPos > reloadPos) {
+		// 	positions->appendingFinished();
+		// 	positions->moveBlockToOutput();
+		// 	positions->loadMore();
+		// 	reloadPos += loadingBlockSize;
+		// }
 		if (lastPos > samPos) {
 			cerr << "The input alignment file is not sorted. Please use sorted SAM file as alignment file." << endl;
 			throw 1;

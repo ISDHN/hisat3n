@@ -198,10 +198,6 @@ class OutputPool {
 		return outputPositionPool.empty();
 	}
 
-	int size() {
-		return outputPositionPool.size();
-	}
-
 	void outputFunction(string outputFileName);
 };
 
@@ -221,9 +217,8 @@ class Positions {
 	bool addedChrName = false;
 	bool removedChrName = false;
 	mutex mutex_;
-	atomic_int32_t refCount;		  // the number of unprocessed or unfinished position
-	long long int location;			  // current location (position) in reference chromosome.
-	long long int refCoveredPosition; // this is the last position in reference chromosome we loaded in refPositions.
+	atomic_int32_t refCount; // the number of unprocessed or unfinished position
+	long long int location;	 // current location (position) in reference chromosome.
 
 	ChromosomeFilePositions chromosomePos; // store the chromosome name and it's streamPos. To quickly find new chromosome in file.
 	ifstream refFile;
@@ -334,30 +329,6 @@ class Positions {
 	}
 
 	/**
-	 * move the position which position smaller than refCoveredPosition - loadingBlockSize, output it.
-	 */
-	void moveBlockToOutput() {
-		if (refPositions.empty()) {
-			return;
-		}
-		int index;
-		for (index = 0; index < refPositions.size(); index++) {
-			if (refPositions[index]->location < refCoveredPosition - loadingBlockSize) {
-				if (refPositions[index]->empty() || refPositions[index]->strand == '?') {
-					returnPosition(refPositions[index]);
-				} else {
-					outputPositionPool->push(this, refPositions[index]);
-				}
-			} else {
-				break;
-			}
-		}
-		if (index != 0) {
-			refPositions.erase(refPositions.begin(), refPositions.begin() + index);
-		}
-	}
-
-	/**
 	 * move all the refPosition into output pool.
 	 */
 	void moveAllToOutput() {
@@ -384,7 +355,6 @@ class Positions {
 		streampos startPos = chromosomePos.getChromosomePosInRefFile(targetChromosome);
 		chromosome = targetChromosome;
 		refFile.seekg(startPos, ios::beg);
-		refCoveredPosition = 2 * loadingBlockSize;
 		string line;
 		lastBase = 'X';
 		location = 0;
@@ -401,38 +371,6 @@ class Positions {
 					line[i] = toupper(line[i]);
 				}
 				appendRefPosition(line);
-				if (location >= refCoveredPosition) {
-					return;
-				}
-			}
-		}
-	}
-
-	/**
-	 * load more Position (loadingBlockSize bp) to positions
-	 * if we meet next chromosome, return false. Else, return ture.
-	 */
-	void loadMore() {
-		refCoveredPosition += loadingBlockSize;
-		string line;
-		while (refFile.good()) {
-			getline(refFile, line);
-			if (line.front() == '>') { // meet next chromosome, return.
-				return;
-			} else {
-				if (line.empty()) {
-					continue;
-				}
-
-				// change all base to upper case
-				for (int i = 0; i < line.size(); i++) {
-					line[i] = toupper(line[i]);
-				}
-
-				appendRefPosition(line);
-				if (location >= refCoveredPosition) {
-					return;
-				}
 			}
 		}
 	}
@@ -566,7 +504,7 @@ class WorkerThreadPool {
 	}
 
 	int workCount() {
-		return workers.size();
+		return tasks.size();
 	}
 
 	void submit(Positions *pos, string *line) {
